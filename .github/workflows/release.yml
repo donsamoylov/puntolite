@@ -1,0 +1,64 @@
+name: Release
+
+# Новый релиз: git tag v1.2.0 && git push origin v1.2.0
+# или Actions → Release → Run workflow → версия
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Версия, например 1.0.0"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Версия из тега
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then V="${{ inputs.version }}"; else V="${GITHUB_REF_NAME#v}"; fi
+          V="${V#v}"
+          [[ "$V" =~ ^[0-9]+(\.[0-9]+)*$ ]] || { echo "::error::Плохая версия: $V"; exit 1; }
+          echo "VERSION=$V" >> "$GITHUB_ENV"
+          echo "TAG=v$V" >> "$GITHUB_ENV"
+
+      - name: Сертификат подписи
+        env:
+          CERT_P12: ${{ secrets.SIGNING_CERT_P12 }}
+          CERT_PASSWORD: ${{ secrets.SIGNING_CERT_PASSWORD }}
+        run: |
+          if [ -z "$CERT_P12" ]; then
+            echo "SIGN_ID=-" >> "$GITHUB_ENV"
+            echo "::warning::SIGNING_CERT_P12 не задан — ad-hoc подпись, доступ Accessibility будет слетать после обновлений"
+            exit 0
+          fi
+          KC="$RUNNER_TEMP/sign.keychain-db"
+          security create-keychain -p ci "$KC"
+          security set-keychain-settings "$KC"
+          security unlock-keychain -p ci "$KC"
+          echo "$CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KC" -P "$CERT_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k ci "$KC"
+          security list-keychains -d user -s "$KC" $(security list-keychains -d user | tr -d '"')
+          # доверие к самоподписанному сертификату, иначе codesign его не видит
+          openssl pkcs12 -in "$RUNNER_TEMP/cert.p12" -nokeys -passin "pass:$CERT_PASSWORD" -out "$RUNNER_TEMP/cert.pem" -legacy 2>/dev/null \
+            || openssl pkcs12 -in "$RUNNER_TEMP/cert.p12" -nokeys -passin "pass:$CERT_PASSWORD" -out "$RUNNER_TEMP/cert.pem"
+          sudo security add-trusted-cert -d -r trustRoot -p codeSign -k /Library/Keychains/System.keychain "$RUNNER_TEMP/cert.pem"
+          security find-identity -v -p codesigning "$KC"
+          echo "SIGN_ID=PuntoLite Signing" >> "$GITHUB_ENV"
+
+      - name: Сборка
+        run: GITHUB_REPO="${{ github.repository }}" bash scripts/build.sh --package
+
+      - name: Релиз
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$TAG" build/PuntoLite.dmg build/PuntoLite.zip \
+            --target "$GITHUB_SHA" --title "PuntoLite $VERSION" --generate-notes

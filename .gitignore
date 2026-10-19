@@ -1,0 +1,5 @@
+build/
+*.p12
+.DS_Store
+Resources/AppIcon.icns
+Resources/MenuIcon.pdf

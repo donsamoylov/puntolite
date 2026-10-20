@@ -1,6 +1,6 @@
-// Настройка схемы Fn → F18 → системная смена языка.
-// Работает и когда PuntoLite выключен: переназначение держит LaunchAgent,
-// а смену языка делает сама macOS по сочетанию F18.
+// Перенастройка кнопки смены языка (Fn / 🌐), чтобы язык менялся сразу.
+// Внутри: Fn переназначается в F18 (hidutil + LaunchAgent), а F18 назначается
+// системным сочетанием смены языка. Работает и когда PuntoLite выключен.
 
 import Foundation
 
@@ -14,7 +14,9 @@ enum FnSetup {
     }
 
     /// Вызывается при каждом запуске: дёшево и идемпотентно.
-    static func ensure() {
+    /// Возвращает true, если кнопку перенастроили сейчас (первый запуск).
+    @discardableResult
+    static func ensure() -> Bool {
         run("/usr/bin/hidutil", ["property", "--set", mapping])
         installAgentIfNeeded()
 
@@ -22,10 +24,12 @@ enum FnSetup {
         if !ud.bool(forKey: "fnSetupDone") {
             applySystemSettings()
             ud.set(true, forKey: "fnSetupDone")
+            return true
         }
+        return false
     }
 
-    /// Пункт меню «Восстановить настройку Fn».
+    /// Пункт меню «Починить кнопку смены языка».
     static func repair() {
         run("/usr/bin/hidutil", ["property", "--set", mapping])
         try? FileManager.default.removeItem(at: agentURL)

@@ -34,12 +34,12 @@ final class Updater {
                 guard error == nil, let data = data,
                       let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                       let tag = json["tag_name"] as? String else {
-                    if userInitiated { self.alert("Не удалось проверить обновления", error?.localizedDescription ?? "") }
+                    if userInitiated { self.alert(L("Не удалось проверить обновления", "Couldn't check for updates"), error?.localizedDescription ?? "") }
                     return
                 }
                 let latest = tag.hasPrefix("v") ? String(tag.dropFirst()) : tag
                 guard Updater.isNewer(latest, than: self.current) else {
-                    if userInitiated { self.alert("Обновлений нет", "У вас последняя версия \(self.current).") }
+                    if userInitiated { self.alert(L("Обновлений нет", "You're up to date"), L("У вас последняя версия", "You have the latest version") + " \(self.current).") }
                     return
                 }
                 let assets = json["assets"] as? [[String: Any]] ?? []
@@ -65,10 +65,10 @@ final class Updater {
     private func offer(version: String, notes: String, url: URL) {
         NSApp.activate(ignoringOtherApps: true)
         let a = NSAlert()
-        a.messageText = "Доступна версия PuntoLite \(version)"
-        a.informativeText = "Установлена \(current).\n\n\(notes)"
-        a.addButton(withTitle: "Обновить")
-        a.addButton(withTitle: "Позже")
+        a.messageText = L("Доступна версия PuntoLite", "PuntoLite update available:") + " \(version)"
+        a.informativeText = L("Установлена", "Installed") + " \(current).\n\n\(notes)"
+        a.addButton(withTitle: L("Обновить", "Update"))
+        a.addButton(withTitle: L("Позже", "Later"))
         if a.runModal() == .alertFirstButtonReturn { download(url) }
     }
 
@@ -76,7 +76,7 @@ final class Updater {
         busy = true
         URLSession.shared.downloadTask(with: url) { tmp, _, error in
             guard let tmp = tmp, error == nil else {
-                DispatchQueue.main.async { self.busy = false; self.alert("Ошибка загрузки", error?.localizedDescription ?? "") }
+                DispatchQueue.main.async { self.busy = false; self.alert(L("Ошибка загрузки", "Download failed"), error?.localizedDescription ?? "") }
                 return
             }
             let fm = FileManager.default
@@ -92,13 +92,13 @@ final class Updater {
         defer { busy = false }
         let fm = FileManager.default
         guard FnSetup.run("/usr/bin/ditto", ["-x", "-k", zip.path, work.path]) == 0 else {
-            alert("Ошибка обновления", "Не удалось распаковать архив."); return
+            alert(L("Ошибка обновления", "Update failed"), L("Не удалось распаковать архив.", "Couldn't unpack the archive.")); return
         }
         let newApp = work.appendingPathComponent("PuntoLite.app")
         // подпись должна быть цела, а идентификатор — наш
         guard FnSetup.run("/usr/bin/codesign", ["--verify", "--deep", "--strict", newApp.path]) == 0,
               Bundle(url: newApp)?.bundleIdentifier == Bundle.main.bundleIdentifier else {
-            alert("Ошибка обновления", "Подпись загруженной версии не прошла проверку."); return
+            alert(L("Ошибка обновления", "Update failed"), L("Подпись загруженной версии не прошла проверку.", "The downloaded version failed the signature check.")); return
         }
         let target = Bundle.main.bundleURL
         let backup = work.appendingPathComponent("old.app")
@@ -107,7 +107,7 @@ final class Updater {
             try fm.moveItem(at: newApp, to: target)
         } catch {
             if !fm.fileExists(atPath: target.path) { try? fm.moveItem(at: backup, to: target) }
-            alert("Ошибка обновления", "Нет прав на запись в \(target.deletingLastPathComponent().path).\n\(error.localizedDescription)")
+            alert(L("Ошибка обновления", "Update failed"), L("Нет прав на запись в", "No write access to") + " \(target.deletingLastPathComponent().path).\n\(error.localizedDescription)")
             return
         }
         // перезапуск после выхода

@@ -1,79 +1,110 @@
 <p align="center">
-  <img src="Resources/icon.svg" width="128" alt="PuntoLite — переключатель раскладки для Mac">
+  <img src="Resources/icon.svg" width="128" alt="PuntoLite — fix keyboard language switching delay on Mac">
 </p>
 
-<h1 align="center">PuntoLite — мгновенная смена языка на Mac</h1>
+<h1 align="center">PuntoLite</h1>
 
 <p align="center">
-  <b>Бесплатная замена Punto Switcher для macOS.</b><br>
-  Язык переключается с первого нажатия, а текст, набранный не в той раскладке, исправляется одной кнопкой.
+  <b>Мгновенная смена языка на Mac — без задержки и пропущенных букв.</b><br>
+  <b>Fix the Mac keyboard language switch delay — switch input source instantly.</b>
 </p>
 
 <p align="center">
-  <a href="../../releases/latest"><b>⬇️ Скачать PuntoLite.dmg</b></a>
+  <a href="../../releases/latest"><b>⬇️ Скачать / Download PuntoLite.dmg</b></a>
+  &nbsp;·&nbsp; <a href="#english">English</a>
 </p>
 
 ---
 
-## Знакомо?
+## Не переключается язык на Mac? Переключается с задержкой?
 
-- Нажимаете кнопку смены языка на Mac, а **язык не переключается** или переключается с задержкой.
-- Начинаете печатать, и первые буквы уходят **не на том языке**.
-- Вместо «привет» получается **«ghbdtn»**, и всё приходится стирать и набирать заново.
-- **Punto Switcher больше не поддерживается**, а Caramba Switcher не всем подходит.
+Самая частая жалоба пользователей Mac: нажимаешь **кнопку смены языка (🌐 / Fn или Caps Lock)**, начинаешь печатать — а первые буквы уходят **на старом языке**. Язык то переключается, то нет, то с задержкой в полсекунды.
 
-Задержка при переключении раскладки с английского на русский (и обратно) — **одна из самых частых жалоб пользователей Mac**. macOS специально «притормаживает» кнопку 🌐 / Fn и Caps Lock, чтобы отсеять случайные нажатия, и при быстром наборе текст начинает печататься не на том языке.
+Это не поломка. macOS **специально притормаживает** кнопку смены языка, чтобы отсеять случайные нажатия. При быстром наборе эта задержка съедает первые символы, и текст печатается не на том языке.
 
-**PuntoLite убирает эту проблему.**
+**PuntoLite убирает задержку.** Кнопка 🌐 / Fn переключает язык **сразу, с первого нажатия**. Работает с любыми языками и раскладками, а после настройки — даже когда приложение закрыто.
 
-## Что умеет
+### Возможности
 
-| Кнопка | Что делает |
-|---|---|
-| **Fn (🌐)** | Переключает русский ⇄ английский **мгновенно**, без задержки. Работает даже когда приложение выключено |
-| **Option (⌥)** | Исправляет текст, набранный не в той раскладке: `ghbdtn` → `привет`, `руддщ` → `hello` |
+| | Для кого | Что делает |
+|---|---|---|
+| **Fn (🌐) — мгновенная смена языка** | все | Убирает системную задержку при переключении раскладки. Любые языки: английский, русский, украинский, немецкий, испанский, китайский и т.д. |
+| **Option (⌥) — исправить раскладку** | русский ⇄ английский | Исправляет текст, набранный не в той раскладке: `ghbdtn` → `привет`, `руддщ` → `hello`. Включается и выключается в меню |
 
-Как работает исправление на **Option**:
+**Исправление раскладки по Option** (только для пары русский + английский):
 - **выделили текст** → он конвертируется в другую раскладку;
-- **ничего не выделено** → PuntoLite сам находит в тексте до курсора слова, набранные не в той раскладке, и исправляет только их. Правильные слова не трогает;
-- нажали ещё раз → всё вернулось как было.
+- **ничего не выделено** → PuntoLite находит в тексте до курсора слова, набранные не в той раскладке, и исправляет только их;
+- нажали ещё раз → всё вернулось как было;
+- не нужно — меню 文A → снимите галочку «Исправлять раскладку по Option».
 
-Слова проверяются по встроенным словарям macOS, поэтому всё работает офлайн и ничего никуда не отправляется.
+Бесплатная замена **Punto Switcher** для Mac, который больше не поддерживается. Работает офлайн, ничего никуда не отправляет.
 
-## Установка
+### Установка
 
-1. [Скачайте **PuntoLite.dmg**](../../releases/latest).
-2. Откройте его и перетащите PuntoLite в «Программы».
-3. Запустите. Если macOS напишет, что разработчик не подтверждён: **Системные настройки → Конфиденциальность и безопасность → Всё равно открыть**.
-4. Разрешите доступ: **Конфиденциальность и безопасность → Универсальный доступ → PuntoLite**.
+1. [Скачайте **PuntoLite.dmg**](../../releases/latest), откройте и перетащите PuntoLite в «Программы».
+2. Снимите блокировку macOS. Приложение бесплатное и не подписано в Apple, поэтому система помечает его как «загруженное из интернета». Откройте **Терминал** и выполните:
+   ```bash
+   xattr -dr com.apple.quarantine /Applications/PuntoLite.app
+   ```
+   Альтернатива без Терминала: запустите PuntoLite, затем **Системные настройки → Конфиденциальность и безопасность → внизу «Всё равно открыть»**.
+3. Запустите PuntoLite. Появится сообщение «Кнопка смены языка перенастроена» — проблема исправлена.
+4. Для исправления раскладки по Option разрешите доступ: **Конфиденциальность и безопасность → Универсальный доступ → PuntoLite**. Если пользуетесь только быстрой сменой языка, этот шаг не нужен.
 
-Всё. Кнопка смены языка перенастроится сама, и задержка исчезнет. PuntoLite живёт в строке меню (значок 文A), не занимает место в Dock и запускается вместе с Mac.
+PuntoLite живёт в строке меню (значок 文A), не занимает место в Dock и запускается вместе с Mac. Обновляется сам.
 
-## Обновления
+### Вопросы
 
-Приложение само проверяет новые версии и предлагает обновиться. Вручную: меню 文A → «Проверить обновления…».
+**macOS пишет «PuntoLite повреждён» или «не удаётся проверить разработчика».** Выполните команду из шага 2 (`xattr -dr com.apple.quarantine /Applications/PuntoLite.app`) и запустите снова.
 
-## Вопросы
+**Apple Silicon (M1–M4) и Intel?** Да, одна сборка. Нужна macOS 13 Ventura или новее.
 
-**Работает на Apple Silicon (M1–M4) и Intel?** Да, одна сборка для всех. Нужна macOS 13 Ventura или новее.
+**Fn+стрелки, Fn+F1–F12 работают?** Нет, кнопка Fn целиком отдана под смену языка. Вернуть как было: меню 文A → «Вернуть стандартную кнопку языка и выйти».
 
-**Fn+стрелки и Fn+F1–F12 работают?** Нет: кнопка Fn целиком отдана под смену языка. Вернуть всё как было можно в меню 文A → «Вернуть стандартную кнопку языка и выйти».
-
-**Что-то перестало переключаться?** Меню 文A → «Починить кнопку смены языка».
+**Язык снова переключается с задержкой?** Меню 文A → «Починить кнопку смены языка».
 
 **Платно?** Нет, бесплатно и с открытым кодом.
 
+<sub>переключение раскладки mac, не переключается язык на макбуке, задержка смены языка macos, язык переключается не с первого раза, кнопка глобус fn смена языка, caps lock смена языка задержка, punto switcher для mac, аналог punto switcher, caramba switcher альтернатива, исправить раскладку, ghbdtn привет</sub>
+
 ---
 
-## In English
+<a id="english"></a>
 
-**PuntoLite** is a free, open-source **Punto Switcher alternative for macOS**. It fixes the annoying **keyboard language switching delay** on Mac: the Globe / Fn key switches between English and Russian **instantly**, even with the app closed. **Option (⌥)** converts text typed in the wrong keyboard layout (`ghbdtn` → `привет`), for the selection or the text before the cursor. Universal (Apple Silicon + Intel), macOS 13+, works offline.
+## Mac keyboard language switch delay — fixed
 
-<sub>Ключевые слова: переключение раскладки mac, не переключается язык macos, задержка смены языка, кнопка глобус, fn смена языка, punto switcher mac, аналог punto switcher, caramba switcher альтернатива, исправить раскладку, ghbdtn привет, macOS keyboard layout switcher, input source switch delay, globe key language switch, wrong keyboard layout fix.</sub>
+Press the **Globe 🌐 / Fn key** (or Caps Lock) to change the input source on your Mac, start typing — and the first letters still come out in the **old language**? Language switching on macOS is **slow, laggy, or doesn't switch on the first press**?
 
-## Для разработчиков
+That's by design: macOS adds a **deliberate delay to the input source switch key** to ignore accidental presses. When you type fast, that delay eats the first characters.
 
-- Новая версия: **Actions → Release → Run workflow** → номер версии. Сборка, DMG и релиз — автоматически.
-- Локальная сборка: `bash scripts/build.sh --package` (нужны Xcode Command Line Tools).
-- Постоянная подпись, чтобы доступ не сбрасывался после обновлений: `bash scripts/make-cert.sh` и два секрета, которые он покажет, в Settings → Secrets → Actions.
-- Как устроено: кнопка Fn переназначается в F18 (`hidutil`, держит LaunchAgent), F18 назначен системным сочетанием смены языка. Исправление раскладки — CGEventTap + Accessibility API + NSSpellChecker.
+**PuntoLite removes the delay.** The Globe / Fn key switches the keyboard language **instantly, on the first press** — for **any language pair** (English, Spanish, German, French, Ukrainian, Chinese, Japanese…). Once set up, it keeps working **even when the app is closed**.
+
+- ✅ Instant input source switching with the Globe / Fn key
+- ✅ Works with any keyboard layouts and languages
+- ✅ No lag, no missed first letters, no switching twice
+- ✅ Free, open source, offline, tiny menu bar app
+- ✅ Apple Silicon & Intel, macOS 13 Ventura and later
+
+### Install
+
+1. [Download **PuntoLite.dmg**](../../releases/latest), open it and drag PuntoLite to **Applications**.
+2. Remove the macOS quarantine flag (the app is free and not notarized by Apple). Open **Terminal** and run:
+   ```bash
+   xattr -dr com.apple.quarantine /Applications/PuntoLite.app
+   ```
+   Or, without Terminal: launch PuntoLite, then **System Settings → Privacy & Security → Open Anyway**.
+3. Launch PuntoLite. You'll see **"Language switch key fixed"** — done.
+
+**"PuntoLite is damaged and can't be opened"?** Run the `xattr` command from step 2 and launch it again.
+
+**Want the Fn key back?** Menu bar 文A → **Restore default Fn key and quit**.
+
+<sub>mac keyboard language switch delay, macos input source switch lag, globe key language switch slow, fn key change language mac, caps lock language switch delay, macos keyboard layout switcher, switch input source instantly mac, language does not switch on first press mac</sub>
+
+---
+
+## Для разработчиков / For developers
+
+- Release: **Actions → Release → Run workflow** → version number. Build, DMG and GitHub release are automatic.
+- Local build: `bash scripts/build.sh --package` (Xcode Command Line Tools).
+- Stable signing so Accessibility access survives updates: `bash scripts/make-cert.sh`, then add the two secrets it prints in Settings → Secrets → Actions.
+- How it works: the Fn key is remapped to F18 via `hidutil` (kept by a LaunchAgent), and F18 is the system shortcut for "Select the previous input source". Layout fixing uses CGEventTap + Accessibility API + NSSpellChecker.

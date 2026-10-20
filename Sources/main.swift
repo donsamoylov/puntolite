@@ -1,17 +1,15 @@
-// PuntoLite — минимальный «пунто» для macOS.
+// PuntoLite — мгновенная смена языка на Mac + исправление раскладки RU/EN.
 //
-// Fn (🌐) — мгновенная смена языка. Работает и без приложения: кнопка
-// перенастраивается один раз (FnSetup.swift), дальше язык меняет сама macOS.
-// Option (одиночное нажатие ⌥):
+// Fn (🌐) — мгновенная смена языка (любые языки). Работает и без приложения:
+// кнопка перенастраивается один раз (FnSetup.swift), дальше язык меняет macOS.
+// Option (одиночное нажатие ⌥) — только при наличии русской раскладки,
+// отключается в меню:
 //   есть выделение → конвертировать выделенное;
 //   нет выделения  → проверить текст до курсора (до 3000 символов)
 //                    и исправить слова, набранные не в той раскладке.
 //   Если ошибок не найдено — конвертируется последнее слово
 //   (повторное нажатие возвращает как было).
-// Если перенастройка кнопки не применилась и приходит обычный Fn —
-// тап Fn переключает язык силами приложения.
-// Фоновое приложение в строке меню, автозапуск при первом запуске. Нужен Accessibility.
-// Схему Fn → F18 настраивает FnSetup.swift, обновления — Updater.swift.
+// Интерфейс — на русском или английском по языку системы.
 
 import Cocoa
 import Carbon
@@ -20,6 +18,10 @@ import ServiceManagement
 
 let maxLookback = 3000          // сколько символов до курсора анализировать
 let pasteThreshold = 30         // длиннее — вставка через буфер обмена, короче — печать
+
+/// Интерфейс на языке системы: русский или английский.
+let isRussianUI = Locale.preferredLanguages.first?.hasPrefix("ru") ?? false
+func L(_ ru: String, _ en: String) -> String { isRussianUI ? ru : en }
 
 // MARK: - Раскладка
 
@@ -170,9 +172,20 @@ final class App: NSObject, NSApplicationDelegate {
     var pauseItem: NSMenuItem!
     var loginItem: NSMenuItem!
 
+    var fixItem: NSMenuItem?
+    var hasRussian: Bool { !layouts.isEmpty }
+    var fixEnabled: Bool {
+        get { UserDefaults.standard.object(forKey: "fixEnabled") as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: "fixEnabled") }
+    }
+    var needsTap: Bool { hasRussian && fixEnabled && !paused }
+
+    let fixedTitle = L("Кнопка смены языка перенастроена", "Language switch key fixed")
+
     @objc func repairFn() {
         FnSetup.repair()
-        notify("Кнопка смены языка перенастроена", "Проблема исправлена: Fn снова мгновенно переключает язык.")
+        notify(fixedTitle, L("Проблема исправлена: Fn (🌐) снова переключает язык сразу.",
+                             "Problem solved: Fn (🌐) switches the input language instantly again."))
     }
 
     func notify(_ title: String, _ text: String) {
@@ -197,10 +210,11 @@ final class App: NSObject, NSApplicationDelegate {
         guard here.path.hasPrefix("/Volumes/") else { return false }
         NSApp.activate(ignoringOtherApps: true)
         let a = NSAlert()
-        a.messageText = "Переместить PuntoLite в «Программы»?"
-        a.informativeText = "Из образа диска приложение не сможет обновляться и запускаться при входе."
-        a.addButton(withTitle: "Переместить")
-        a.addButton(withTitle: "Не сейчас")
+        a.messageText = L("Переместить PuntoLite в «Программы»?", "Move PuntoLite to Applications?")
+        a.informativeText = L("Из образа диска приложение не сможет обновляться и запускаться при входе.",
+                              "Running from the disk image, the app can't update itself or start at login.")
+        a.addButton(withTitle: L("Переместить", "Move"))
+        a.addButton(withTitle: L("Не сейчас", "Not now"))
         guard a.runModal() == .alertFirstButtonReturn else { return false }
         let dest = URL(fileURLWithPath: "/Applications/PuntoLite.app")
         let fm = FileManager.default
@@ -225,7 +239,36 @@ final class App: NSObject, NSApplicationDelegate {
         paused.toggle()
         pauseItem.state = paused ? .on : .off
         buffer.removeAll()
+        applyTapState()
+    }
+
+    @objc func toggleFix() {
+        fixEnabled.toggle()
+        fixItem?.state = fixEnabled ? .on : .off
+        buffer.removeAll()
+        applyTapState()
+    }
+
+    /// Перехват клавиатуры нужен только для исправления раскладки.
+    func applyTapState() {
+        if needsTap {
+            if let t = tap { CGEvent.tapEnable(tap: t, enable: true) } else { requestAccessAndStart() }
+        } else if let t = tap {
+            CGEvent.tapEnable(tap: t, enable: false)
+        }
         updateTitle()
+    }
+
+    func requestAccessAndStart() {
+        let opts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+        if AXIsProcessTrustedWithOptions(opts) {
+            startTap()
+        } else {
+            Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] t in
+                guard let self = self else { t.invalidate(); return }
+                if AXIsProcessTrusted() { t.invalidate(); if self.needsTap && self.tap == nil { self.startTap() } }
+            }
+        }
     }
 
     @objc func toggleLogin() {
@@ -236,23 +279,29 @@ final class App: NSObject, NSApplicationDelegate {
                 try SMAppService.mainApp.register()
             }
         } catch {
-            let a = NSAlert()
-            a.messageText = "Не удалось изменить автозапуск"
-            a.informativeText = "Переместите приложение в папку «Программы» и попробуйте снова.\n\(error.localizedDescription)"
-            a.runModal()
+            notify(L("Не удалось изменить автозапуск", "Couldn't change Open at Login"),
+                   L("Переместите приложение в папку «Программы» и попробуйте снова.",
+                     "Move the app to the Applications folder and try again.") + "\n\(error.localizedDescription)")
         }
         loginItem.state = SMAppService.mainApp.status == .enabled ? .on : .off
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         if moveToApplicationsIfNeeded() { return }
+        if let pair = findLayouts() { layouts = [pair.0, pair.1] }   // RU+EN есть — доступно исправление раскладки
+
         if FnSetup.ensure() {
+            let extra = hasRussian
+                ? L("\nOption (⌥) — исправить текст, набранный не в той раскладке.", "")
+                : ""
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                self.notify("Кнопка смены языка перенастроена",
-                            "Проблема исправлена: Fn (🌐) теперь переключает язык сразу, без задержки.\nOption (⌥) — исправить текст, набранный не в той раскладке.")
+                self.notify(self.fixedTitle,
+                            L("Проблема исправлена: Fn (🌐) теперь переключает язык сразу, без задержки.",
+                              "Problem solved: Fn (🌐) now switches the input language instantly, with no delay.") + extra)
             }
         }
         Updater.shared.start()
+
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let url = Bundle.main.url(forResource: "MenuIcon", withExtension: "pdf"),
            let img = NSImage(contentsOf: url) {
@@ -262,18 +311,29 @@ final class App: NSObject, NSApplicationDelegate {
             statusItem.button?.imagePosition = .imageLeading
             statusItem.button?.title = ""
         }
+
         let menu = NSMenu()
         let header = NSMenuItem(title: "PuntoLite", action: nil, keyEquivalent: "")
         header.isEnabled = false
         menu.addItem(header)
         menu.addItem(.separator())
-        menu.addItem(NSMenuItem(title: "Fn (🌐) — сменить язык", action: nil, keyEquivalent: ""))
-        menu.addItem(NSMenuItem(title: "Option (⌥) — исправить раскладку", action: nil, keyEquivalent: ""))
+        let fnInfo = NSMenuItem(title: L("Fn (🌐) — мгновенная смена языка", "Fn (🌐) — instant language switch"),
+                                action: nil, keyEquivalent: "")
+        fnInfo.isEnabled = false
+        menu.addItem(fnInfo)
+        if hasRussian {
+            let item = NSMenuItem(title: L("Исправлять раскладку по Option (⌥)", "Fix wrong layout with Option (⌥)"),
+                                  action: #selector(toggleFix), keyEquivalent: "")
+            item.target = self
+            item.state = fixEnabled ? .on : .off
+            menu.addItem(item)
+            fixItem = item
+        }
         menu.addItem(.separator())
-        pauseItem = NSMenuItem(title: "Пауза", action: #selector(togglePause), keyEquivalent: "")
+        pauseItem = NSMenuItem(title: L("Пауза", "Pause"), action: #selector(togglePause), keyEquivalent: "")
         pauseItem.target = self
-        menu.addItem(pauseItem)
-        loginItem = NSMenuItem(title: "Запускать при входе", action: #selector(toggleLogin), keyEquivalent: "")
+        if hasRussian { menu.addItem(pauseItem) }
+        loginItem = NSMenuItem(title: L("Запускать при входе", "Open at Login"), action: #selector(toggleLogin), keyEquivalent: "")
         loginItem.target = self
         // автозапуск включаем сами при первом запуске
         let ud = UserDefaults.standard
@@ -284,54 +344,36 @@ final class App: NSObject, NSApplicationDelegate {
         loginItem.state = SMAppService.mainApp.status == .enabled ? .on : .off
         menu.addItem(loginItem)
         menu.addItem(.separator())
-        let perm = NSMenuItem(title: "Открыть настройки доступа…", action: #selector(openAXSettings), keyEquivalent: "")
-        perm.target = self
-        menu.addItem(perm)
-        let repair = NSMenuItem(title: "Починить кнопку смены языка", action: #selector(repairFn), keyEquivalent: "")
+        if hasRussian {
+            let perm = NSMenuItem(title: L("Открыть настройки доступа…", "Open Accessibility Settings…"),
+                                  action: #selector(openAXSettings), keyEquivalent: "")
+            perm.target = self
+            menu.addItem(perm)
+        }
+        let repair = NSMenuItem(title: L("Починить кнопку смены языка", "Fix language switch key"),
+                                action: #selector(repairFn), keyEquivalent: "")
         repair.target = self
         menu.addItem(repair)
-        let reset = NSMenuItem(title: "Вернуть стандартную кнопку языка и выйти", action: #selector(uninstallFn), keyEquivalent: "")
+        let reset = NSMenuItem(title: L("Вернуть стандартную кнопку языка и выйти", "Restore default Fn key and quit"),
+                               action: #selector(uninstallFn), keyEquivalent: "")
         reset.target = self
         menu.addItem(reset)
         menu.addItem(.separator())
-        let ver = NSMenuItem(title: "Версия \(Updater.shared.current)", action: nil, keyEquivalent: "")
+        let ver = NSMenuItem(title: L("Версия", "Version") + " \(Updater.shared.current)", action: nil, keyEquivalent: "")
         ver.isEnabled = false
         menu.addItem(ver)
-        let upd = NSMenuItem(title: "Проверить обновления…", action: #selector(checkUpdates), keyEquivalent: "")
+        let upd = NSMenuItem(title: L("Проверить обновления…", "Check for Updates…"), action: #selector(checkUpdates), keyEquivalent: "")
         upd.target = self
         menu.addItem(upd)
-        menu.addItem(NSMenuItem(title: "Выход", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+        menu.addItem(NSMenuItem(title: L("Выход", "Quit"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         statusItem.menu = menu
 
-        guard let pair = findLayouts() else {
-            statusItem.button?.title = "⌨︎?"
-            let a = NSAlert()
-            a.messageText = "Не найдены раскладки EN и RU"
-            a.informativeText = "Добавьте английскую и русскую раскладки в Keyboard → Input Sources."
-            a.runModal()
-            NSApp.terminate(nil)
-            return
-        }
-        layouts = [pair.0, pair.1]
+        guard hasRussian else { updateTitle(); return }  // без русской раскладки — только фикс кнопки языка
 
-        DistributedNotificationCenter.default().addObserver(
-            self, selector: #selector(updateTitle),
-            name: NSNotification.Name(kTISNotifySelectedKeyboardInputSourceChanged as String),
-            object: nil, suspensionBehavior: .deliverImmediately)
         NSWorkspace.shared.notificationCenter.addObserver(
             self, selector: #selector(resetBuffer),
             name: NSWorkspace.didActivateApplicationNotification, object: nil)
-        updateTitle()
-
-        let opts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
-        if AXIsProcessTrustedWithOptions(opts) {
-            startTap()
-        } else {
-            statusItem.button?.title = " !"
-            Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] t in
-                if AXIsProcessTrusted() { t.invalidate(); self?.startTap() }
-            }
-        }
+        applyTapState()
     }
 
     func startTap() {
@@ -342,7 +384,7 @@ final class App: NSObject, NSApplicationDelegate {
                                         options: .defaultTap, eventsOfInterest: mask,
                                         callback: tapCallback,
                                         userInfo: Unmanaged.passUnretained(self).toOpaque()) else {
-            statusItem.button?.title = " !"
+            updateTitle()
             return
         }
         tap = t
@@ -357,10 +399,10 @@ final class App: NSObject, NSApplicationDelegate {
     func handle(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
         let pass = Unmanaged.passUnretained(event)
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-            if let t = tap { CGEvent.tapEnable(tap: t, enable: true) }
+            if let t = tap, needsTap { CGEvent.tapEnable(tap: t, enable: true) }
             return pass
         }
-        if paused { return pass }
+        if !needsTap { return pass }
         if event.getIntegerValueField(.eventSourceUserData) == magic { return pass }
         let code = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
 
@@ -392,7 +434,7 @@ final class App: NSObject, NSApplicationDelegate {
                         pendingFix = false
                         DispatchQueue.main.async { self.fnSpace() }
                     } else if !fnUsed && Date().timeIntervalSince(fnTime) < 0.6 {
-                        DispatchQueue.main.async { self.select(self.currentIndex() == 0 ? 1 : 0) }
+                        DispatchQueue.main.async { if self.hasRussian { self.select(self.currentIndex() == 0 ? 1 : 0) } }
                     }
                 }
             }
@@ -464,10 +506,8 @@ final class App: NSObject, NSApplicationDelegate {
     }
 
     @objc func updateTitle() {
-        let i = currentIndex()
-        _ = i
-        statusItem.button?.title = tap == nil ? " !" : ""        // «!» — нет доступа
-        statusItem.button?.appearsDisabled = paused            // на паузе иконка бледная
+        statusItem?.button?.title = (needsTap && tap == nil) ? " !" : ""   // «!» — нет доступа
+        statusItem?.button?.appearsDisabled = paused                     // на паузе иконка бледная
     }
 
     // MARK: Конвертация

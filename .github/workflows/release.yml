@@ -60,5 +60,15 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          cat > notes.md <<'MD'
+          **Установка / Install:** откройте DMG и перетащите PuntoLite в «Программы» / drag PuntoLite to Applications, затем в Терминале / then in Terminal:
+
+          ```bash
+          xattr -dr com.apple.quarantine /Applications/PuntoLite.app
+          ```
+
+          Запустите PuntoLite — кнопка смены языка будет перенастроена. / Launch PuntoLite — the language switch key gets fixed.
+          MD
+          sed -i '' 's/^          //' notes.md
           gh release create "$TAG" build/PuntoLite.dmg build/PuntoLite.zip \
-            --target "$GITHUB_SHA" --title "PuntoLite $VERSION" --generate-notes
+            --target "$GITHUB_SHA" --title "PuntoLite $VERSION" --notes-file notes.md --generate-notes

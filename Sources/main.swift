@@ -1,16 +1,15 @@
 // PuntoLite — минимальный «пунто» для macOS.
 //
-// Основная схема: Fn переназначен в F18 (hidutil), F18 — системное сочетание
-// смены языка. Это работает и без приложения.
-// PuntoLite добавляет:
-// Fn(F18) + Space : есть выделение → конвертировать выделенное;
-//               нет выделения  → проверить текст до курсора (до 3000 символов)
-//                                и исправить слова, набранные не в той раскладке.
-//               Если ошибок не найдено — конвертируется последнее слово
-//               (повторное нажатие возвращает как было).
-//
-// Если переназначения нет и приходит обычный Fn — тап Fn переключает язык,
-// Fn + Space исправляет раскладку.
+// Fn (🌐) — мгновенная смена языка. Работает и без приложения: кнопка
+// перенастраивается один раз (FnSetup.swift), дальше язык меняет сама macOS.
+// Option (одиночное нажатие ⌥):
+//   есть выделение → конвертировать выделенное;
+//   нет выделения  → проверить текст до курсора (до 3000 символов)
+//                    и исправить слова, набранные не в той раскладке.
+//   Если ошибок не найдено — конвертируется последнее слово
+//   (повторное нажатие возвращает как было).
+// Если перенастройка кнопки не применилась и приходит обычный Fn —
+// тап Fn переключает язык силами приложения.
 // Фоновое приложение в строке меню, автозапуск при первом запуске. Нужен Accessibility.
 // Схему Fn → F18 настраивает FnSetup.swift, обновления — Updater.swift.
 
@@ -164,11 +163,25 @@ final class App: NSObject, NSApplicationDelegate {
     var pendingFix = false
     var swallowSpaceUp = false
     var f18Down = false                                  // Fn, переназначенный в F18
+    var optDown = false                                  // одиночное нажатие Option
+    var optUsed = false
+    var optTime = Date()
     var paused = false
     var pauseItem: NSMenuItem!
     var loginItem: NSMenuItem!
 
-    @objc func repairFn() { FnSetup.repair() }
+    @objc func repairFn() {
+        FnSetup.repair()
+        notify("Кнопка смены языка перенастроена", "Проблема исправлена: Fn снова мгновенно переключает язык.")
+    }
+
+    func notify(_ title: String, _ text: String) {
+        NSApp.activate(ignoringOtherApps: true)
+        let a = NSAlert()
+        a.messageText = title
+        a.informativeText = text
+        a.runModal()
+    }
 
     @objc func uninstallFn() {
         FnSetup.uninstall()
@@ -233,7 +246,12 @@ final class App: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         if moveToApplicationsIfNeeded() { return }
-        FnSetup.ensure()
+        if FnSetup.ensure() {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                self.notify("Кнопка смены языка перенастроена",
+                            "Проблема исправлена: Fn (🌐) теперь переключает язык сразу, без задержки.\nOption (⌥) — исправить текст, набранный не в той раскладке.")
+            }
+        }
         Updater.shared.start()
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let url = Bundle.main.url(forResource: "MenuIcon", withExtension: "pdf"),
@@ -249,8 +267,8 @@ final class App: NSObject, NSApplicationDelegate {
         header.isEnabled = false
         menu.addItem(header)
         menu.addItem(.separator())
-        menu.addItem(NSMenuItem(title: "Fn — сменить язык", action: nil, keyEquivalent: ""))
-        menu.addItem(NSMenuItem(title: "Fn+Space — исправить раскладку", action: nil, keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "Fn (🌐) — сменить язык", action: nil, keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "Option (⌥) — исправить раскладку", action: nil, keyEquivalent: ""))
         menu.addItem(.separator())
         pauseItem = NSMenuItem(title: "Пауза", action: #selector(togglePause), keyEquivalent: "")
         pauseItem.target = self
@@ -269,10 +287,10 @@ final class App: NSObject, NSApplicationDelegate {
         let perm = NSMenuItem(title: "Открыть настройки доступа…", action: #selector(openAXSettings), keyEquivalent: "")
         perm.target = self
         menu.addItem(perm)
-        let repair = NSMenuItem(title: "Восстановить настройку Fn → F18", action: #selector(repairFn), keyEquivalent: "")
+        let repair = NSMenuItem(title: "Починить кнопку смены языка", action: #selector(repairFn), keyEquivalent: "")
         repair.target = self
         menu.addItem(repair)
-        let reset = NSMenuItem(title: "Вернуть стандартный Fn и выйти", action: #selector(uninstallFn), keyEquivalent: "")
+        let reset = NSMenuItem(title: "Вернуть стандартную кнопку языка и выйти", action: #selector(uninstallFn), keyEquivalent: "")
         reset.target = self
         menu.addItem(reset)
         menu.addItem(.separator())
@@ -348,6 +366,22 @@ final class App: NSObject, NSApplicationDelegate {
 
         switch type {
         case .flagsChanged:
+            if code == 58 || code == 61 {                      // Option (левый / правый)
+                let others: CGEventFlags = [.maskCommand, .maskControl, .maskShift, .maskSecondaryFn]
+                let down = event.flags.contains(.maskAlternate)
+                if down && !optDown {
+                    optDown = true
+                    optUsed = !event.flags.intersection(others).isEmpty
+                    optTime = Date()
+                } else if !down && optDown {
+                    optDown = false
+                    if !optUsed && Date().timeIntervalSince(optTime) < 0.5 {
+                        DispatchQueue.main.async { self.fnSpace() }
+                    }
+                }
+                return pass
+            }
+            if optDown { optUsed = true }                      // Option в сочетании с другим модификатором
             if code == 63 || code == 179 {                     // Fn / Globe
                 let down = event.flags.contains(.maskSecondaryFn)
                 if down && !fnDown {
@@ -365,27 +399,14 @@ final class App: NSObject, NSApplicationDelegate {
             return pass
 
         case .keyDown:
+            if optDown { optUsed = true }                      // ⌥+клавиша — обычный ввод, не наш тап
             if code == 79 {                                 // F18 (= Fn через hidutil)
                 // пропускаем дальше: язык переключает сама macOS по сочетанию F18
                 if event.getIntegerValueField(.keyboardEventAutorepeat) == 0 { f18Down = true }
                 return pass
             }
-            if f18Down {
-                if code == 49 {                             // F18 + Space
-                    swallowSpaceUp = true
-                    DispatchQueue.main.async { self.fnSpace() }
-                    return nil
-                }
-                buffer.removeAll()
-                return pass
-            }
-            if fnDown {
+            if f18Down || fnDown {                          // сочетания с Fn — не трогаем
                 fnUsed = true
-                if code == 49 {                                 // Fn + Space
-                    pendingFix = true
-                    swallowSpaceUp = true
-                    return nil
-                }
                 buffer.removeAll()
                 return pass
             }
@@ -398,6 +419,7 @@ final class App: NSObject, NSApplicationDelegate {
             return pass
 
         case .leftMouseDown, .rightMouseDown, .otherMouseDown:
+            if optDown { optUsed = true }                      // ⌥+клик
             buffer.removeAll()
             return pass
 
@@ -560,7 +582,7 @@ final class App: NSObject, NSApplicationDelegate {
                        finalLayout: scriptLayout(lastFinal))
     }
 
-    // MARK: Fn + Space
+    // MARK: Исправление раскладки (Option)
 
     func fnSpace() {
         if let el = editableFocused() {

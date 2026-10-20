@@ -173,6 +173,9 @@ final class App: NSObject, NSApplicationDelegate {
     var loginItem: NSMenuItem!
 
     var fixItem: NSMenuItem?
+    var accessItem: NSMenuItem?
+    var accessTimer: Timer?
+    var isReturningUser = false                          // приложение уже запускалось раньше
     var hasRussian: Bool { !layouts.isEmpty }
     var fixEnabled: Bool {
         get { UserDefaults.standard.object(forKey: "fixEnabled") as? Bool ?? true }
@@ -259,17 +262,45 @@ final class App: NSObject, NSApplicationDelegate {
         updateTitle()
     }
 
-    func requestAccessAndStart() {
+    /// Доступ к «Универсальному доступу» нужен только для исправления раскладки.
+    /// После обновления (новая подпись) macOS считает приложение другим: старая
+    /// запись остаётся, но не работает. Тогда сбрасываем её и просим включить заново.
+    func requestAccessAndStart(userInitiated: Bool = false) {
+        if AXIsProcessTrusted() { startTap(); return }
+        let ud = UserDefaults.standard
+        let version = Updater.shared.current
+        let afterUpdate = isReturningUser && ud.string(forKey: "accessResetVersion") != version
+        if afterUpdate || userInitiated {
+            ud.set(version, forKey: "accessResetVersion")
+            FnSetup.run("/usr/bin/tccutil", ["reset", "Accessibility", Bundle.main.bundleIdentifier ?? "local.puntolite"])
+            explainAccess(afterUpdate: afterUpdate && !userInitiated)
+        }
         let opts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
-        if AXIsProcessTrustedWithOptions(opts) {
-            startTap()
-        } else {
-            Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] t in
+        _ = AXIsProcessTrustedWithOptions(opts)
+        if accessTimer == nil {
+            accessTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] t in
                 guard let self = self else { t.invalidate(); return }
-                if AXIsProcessTrusted() { t.invalidate(); if self.needsTap && self.tap == nil { self.startTap() } }
+                if AXIsProcessTrusted() {
+                    t.invalidate(); self.accessTimer = nil
+                    if self.needsTap && self.tap == nil { self.startTap() }
+                }
             }
         }
+        updateTitle()
     }
+
+    func explainAccess(afterUpdate: Bool) {
+        let why = afterUpdate
+            ? L("PuntoLite обновился, и macOS просит подтвердить доступ ещё раз. ",
+                "PuntoLite was updated, and macOS asks you to confirm access again. ")
+            : ""
+        notify(L("Включите PuntoLite в «Универсальном доступе»", "Turn on PuntoLite in Accessibility"),
+               why + L("В открывшемся окне включите переключатель у PuntoLite.\n\nЭто нужно только для исправления раскладки по Option. Смена языка по Fn работает и без этого.",
+                       "In the window that opens, turn on the switch next to PuntoLite.\n\nThis is only needed to fix the wrong layout with Option. Instant language switching with Fn works without it."))
+        openAXSettings()
+    }
+
+    @objc func fixAccess() { requestAccessAndStart(userInitiated: true) }
 
     @objc func toggleLogin() {
         do {
@@ -288,6 +319,7 @@ final class App: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         if moveToApplicationsIfNeeded() { return }
+        isReturningUser = UserDefaults.standard.bool(forKey: "fnSetupDone")
         if let pair = findLayouts() { layouts = [pair.0, pair.1] }   // RU+EN есть — доступно исправление раскладки
 
         if FnSetup.ensure() {
@@ -328,6 +360,12 @@ final class App: NSObject, NSApplicationDelegate {
             item.state = fixEnabled ? .on : .off
             menu.addItem(item)
             fixItem = item
+            let acc = NSMenuItem(title: L("⚠️ Включить исправление раскладки…", "⚠️ Enable layout fix…"),
+                                 action: #selector(fixAccess), keyEquivalent: "")
+            acc.target = self
+            acc.isHidden = true
+            menu.addItem(acc)
+            accessItem = acc
         }
         menu.addItem(.separator())
         pauseItem = NSMenuItem(title: L("Пауза", "Pause"), action: #selector(togglePause), keyEquivalent: "")
@@ -388,6 +426,7 @@ final class App: NSObject, NSApplicationDelegate {
             return
         }
         tap = t
+        UserDefaults.standard.set(Updater.shared.current, forKey: "accessResetVersion")
         let rl = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, t, 0)
         CFRunLoopAddSource(CFRunLoopGetMain(), rl, .commonModes)
         CGEvent.tapEnable(tap: t, enable: true)
@@ -506,7 +545,9 @@ final class App: NSObject, NSApplicationDelegate {
     }
 
     @objc func updateTitle() {
-        statusItem?.button?.title = (needsTap && tap == nil) ? " !" : ""   // «!» — нет доступа
+        let noAccess = needsTap && tap == nil
+        statusItem?.button?.title = noAccess ? " !" : ""                 // «!» — нет доступа
+        accessItem?.isHidden = !noAccess
         statusItem?.button?.appearsDisabled = paused                     // на паузе иконка бледная
     }
 

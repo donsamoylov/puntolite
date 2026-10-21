@@ -176,6 +176,8 @@ final class App: NSObject, NSApplicationDelegate {
     var accessItem: NSMenuItem?
     var accessTimer: Timer?
     var isReturningUser = false                          // приложение уже запускалось раньше
+    var curSourceID: String?                             // текущий язык ввода
+    var prevSourceID: String?                            // предыдущий — куда вернуться по Fn
     var hasRussian: Bool { !layouts.isEmpty }
     var fixEnabled: Bool {
         get { UserDefaults.standard.object(forKey: "fixEnabled") as? Bool ?? true }
@@ -252,13 +254,13 @@ final class App: NSObject, NSApplicationDelegate {
         applyTapState()
     }
 
-    /// Перехват клавиатуры нужен только для исправления раскладки.
+    /// Перехват клавиатуры: исправление раскладки (если включено) и страховка Fn.
+    /// Доступ запрашиваем только ради исправления раскладки; если он уже выдан —
+    /// перехват работает и для страховки Fn.
     func applyTapState() {
-        if needsTap {
-            if let t = tap { CGEvent.tapEnable(tap: t, enable: true) } else { requestAccessAndStart() }
-        } else if let t = tap {
-            CGEvent.tapEnable(tap: t, enable: false)
-        }
+        if let t = tap { CGEvent.tapEnable(tap: t, enable: true) }
+        else if needsTap { requestAccessAndStart() }
+        else if AXIsProcessTrusted() { startTap() }
         updateTitle()
     }
 
@@ -282,7 +284,7 @@ final class App: NSObject, NSApplicationDelegate {
                 guard let self = self else { t.invalidate(); return }
                 if AXIsProcessTrusted() {
                     t.invalidate(); self.accessTimer = nil
-                    if self.needsTap && self.tap == nil { self.startTap() }
+                    if self.tap == nil { self.startTap() }
                 }
             }
         }
@@ -360,13 +362,15 @@ final class App: NSObject, NSApplicationDelegate {
             item.state = fixEnabled ? .on : .off
             menu.addItem(item)
             fixItem = item
-            let acc = NSMenuItem(title: L("⚠️ Включить исправление раскладки…", "⚠️ Enable layout fix…"),
-                                 action: #selector(fixAccess), keyEquivalent: "")
-            acc.target = self
-            acc.isHidden = true
-            menu.addItem(acc)
-            accessItem = acc
         }
+        let acc = NSMenuItem(title: hasRussian
+                                ? L("⚠️ Включить исправление раскладки…", "⚠️ Enable layout fix…")
+                                : L("Fn во всех программах (Photoshop и др.)…", "Make Fn work in all apps (Photoshop etc.)…"),
+                             action: #selector(fixAccess), keyEquivalent: "")
+        acc.target = self
+        acc.isHidden = true
+        menu.addItem(acc)
+        accessItem = acc
         menu.addItem(.separator())
         pauseItem = NSMenuItem(title: L("Пауза", "Pause"), action: #selector(togglePause), keyEquivalent: "")
         pauseItem.target = self
@@ -406,8 +410,11 @@ final class App: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem(title: L("Выход", "Quit"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         statusItem.menu = menu
 
-        guard hasRussian else { updateTitle(); return }  // без русской раскладки — только фикс кнопки языка
-
+        curSourceID = currentSourceID()
+        DistributedNotificationCenter.default().addObserver(
+            self, selector: #selector(sourceChanged),
+            name: NSNotification.Name(kTISNotifySelectedKeyboardInputSourceChanged as String),
+            object: nil, suspensionBehavior: .deliverImmediately)
         NSWorkspace.shared.notificationCenter.addObserver(
             self, selector: #selector(resetBuffer),
             name: NSWorkspace.didActivateApplicationNotification, object: nil)
@@ -438,16 +445,16 @@ final class App: NSObject, NSApplicationDelegate {
     func handle(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
         let pass = Unmanaged.passUnretained(event)
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-            if let t = tap, needsTap { CGEvent.tapEnable(tap: t, enable: true) }
+            if let t = tap { CGEvent.tapEnable(tap: t, enable: true) }
             return pass
         }
-        if !needsTap { return pass }
+        let fixActive = needsTap
         if event.getIntegerValueField(.eventSourceUserData) == magic { return pass }
         let code = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
 
         switch type {
         case .flagsChanged:
-            if code == 58 || code == 61 {                      // Option (левый / правый)
+            if (code == 58 || code == 61) && fixActive {       // Option (левый / правый)
                 let others: CGEventFlags = [.maskCommand, .maskControl, .maskShift, .maskSecondaryFn]
                 let down = event.flags.contains(.maskAlternate)
                 if down && !optDown {
@@ -483,7 +490,10 @@ final class App: NSObject, NSApplicationDelegate {
             if optDown { optUsed = true }                      // ⌥+клавиша — обычный ввод, не наш тап
             if code == 79 {                                 // F18 (= Fn через hidutil)
                 // пропускаем дальше: язык переключает сама macOS по сочетанию F18
-                if event.getIntegerValueField(.keyboardEventAutorepeat) == 0 { f18Down = true }
+                if event.getIntegerValueField(.keyboardEventAutorepeat) == 0 {
+                    f18Down = true
+                    f18Watchdog()                           // если программа «съела» сочетание — переключим сами
+                }
                 return pass
             }
             if f18Down || fnDown {                          // сочетания с Fn — не трогаем
@@ -491,7 +501,7 @@ final class App: NSObject, NSApplicationDelegate {
                 buffer.removeAll()
                 return pass
             }
-            record(event, code: code)
+            if fixActive { record(event, code: code) }
             return pass
 
         case .keyUp:
@@ -539,6 +549,44 @@ final class App: NSObject, NSApplicationDelegate {
         return -1
     }
 
+    // MARK: Страховка Fn: программы, которые глотают сочетание смены языка
+
+    func sourceID(_ src: TISInputSource) -> String? {
+        guard let p = TISGetInputSourceProperty(src, kTISPropertyInputSourceID) else { return nil }
+        return Unmanaged<CFString>.fromOpaque(p).takeUnretainedValue() as String
+    }
+
+    func currentSourceID() -> String? { sourceID(TISCopyCurrentKeyboardInputSource().takeRetainedValue()) }
+
+    @objc func sourceChanged() {
+        if let id = currentSourceID(), id != curSourceID {
+            prevSourceID = curSourceID
+            curSourceID = id
+        }
+        updateTitle()
+    }
+
+    func selectableSources() -> [TISInputSource] {
+        let filter: [String: Any] = [kTISPropertyInputSourceCategory as String: kTISCategoryKeyboardInputSource as String,
+                                     kTISPropertyInputSourceIsSelectCapable as String: true]
+        guard let raw = TISCreateInputSourceList(filter as CFDictionary, false) else { return [] }
+        return raw.takeRetainedValue() as NSArray as! [TISInputSource]
+    }
+
+    /// Fn (F18) обычно переключает сама macOS. Некоторые окна (например, диалоги
+    /// Photoshop) перехватывают сочетание — тогда язык не меняется. Если за 0,3 с
+    /// смены не было, переключаем на предыдущий язык сами.
+    func f18Watchdog() {
+        let before = currentSourceID()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            guard self.currentSourceID() == before else { return }
+            let sources = self.selectableSources()
+            let target = sources.first(where: { self.sourceID($0) == self.prevSourceID && self.prevSourceID != before })
+                ?? sources.first(where: { self.sourceID($0) != before })
+            if let t = target { TISSelectInputSource(t) }
+        }
+    }
+
     func select(_ i: Int) {
         TISSelectInputSource(layouts[i].source)
         updateTitle()
@@ -547,7 +595,7 @@ final class App: NSObject, NSApplicationDelegate {
     @objc func updateTitle() {
         let noAccess = needsTap && tap == nil
         statusItem?.button?.title = noAccess ? " !" : ""                 // «!» — нет доступа
-        accessItem?.isHidden = !noAccess
+        accessItem?.isHidden = hasRussian ? !noAccess : tap != nil
         statusItem?.button?.appearsDisabled = paused                     // на паузе иконка бледная
     }
 

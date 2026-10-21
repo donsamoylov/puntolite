@@ -9,6 +9,7 @@
 //                    и исправить слова, набранные не в той раскладке.
 //   Если ошибок не найдено — конвертируется последнее слово
 //   (повторное нажатие возвращает как было).
+// Option + Space — конвертировать только последнее слово до пробела/спецсимвола.
 // Интерфейс — на русском или английском по языку системы.
 
 import Cocoa
@@ -362,6 +363,10 @@ final class App: NSObject, NSApplicationDelegate {
             item.state = fixEnabled ? .on : .off
             menu.addItem(item)
             fixItem = item
+            let wordInfo = NSMenuItem(title: L("    Option + Пробел — только последнее слово", "    Option + Space — last word only"),
+                                      action: nil, keyEquivalent: "")
+            wordInfo.isEnabled = false
+            menu.addItem(wordInfo)
         }
         let acc = NSMenuItem(title: hasRussian
                                 ? L("⚠️ Включить исправление раскладки…", "⚠️ Enable layout fix…")
@@ -488,6 +493,12 @@ final class App: NSObject, NSApplicationDelegate {
 
         case .keyDown:
             if optDown { optUsed = true }                      // ⌥+клавиша — обычный ввод, не наш тап
+            if optDown && code == 49 && fixActive &&           // Option + Space — только последнее слово
+               event.flags.intersection([.maskCommand, .maskControl, .maskShift, .maskSecondaryFn]).isEmpty {
+                swallowSpaceUp = true
+                DispatchQueue.main.async { self.lastWordFix() }
+                return nil
+            }
             if code == 79 {                                 // F18 (= Fn через hidutil)
                 // пропускаем дальше: язык переключает сама macOS по сочетанию F18
                 if event.getIntegerValueField(.keyboardEventAutorepeat) == 0 {
@@ -725,6 +736,62 @@ final class App: NSObject, NSApplicationDelegate {
             if fixViaAX(el) { return }
         }
         fixViaBuffer()
+    }
+
+    /// Option + Space: конвертировать только последнее слово перед курсором —
+    /// до первого пробела или спецсимвола. Если есть выделение — его.
+    func lastWordFix() {
+        let isLetter: (String) -> Bool = { !$0.isEmpty && $0.unicodeScalars.allSatisfy { CharacterSet.letters.contains($0) } }
+        if let el = editableFocused(), let value = axString(el, kAXValueAttribute), let sel = axRange(el) {
+            let ns = value as NSString
+            let cursor = sel.location
+            if cursor != kCFNotFound, cursor >= 0, cursor + max(sel.length, 0) <= ns.length {
+                if sel.length > 0 {
+                    let conv = convertAuto(ns.substring(with: NSRange(location: cursor, length: sel.length)))
+                    replaceSelection(el, with: conv.text)
+                    buffer.removeAll()
+                    select(conv.dst)
+                    return
+                }
+                var start = cursor
+                while start > 0 {
+                    let r = ns.rangeOfComposedCharacterSequence(at: start - 1)
+                    guard isLetter(ns.substring(with: r)) else { break }
+                    start = r.location
+                }
+                guard start < cursor else { return }
+                let conv = convertAuto(ns.substring(with: NSRange(location: start, length: cursor - start)))
+                if setRange(el, CFRange(location: start, length: cursor - start)) {
+                    usleep(20_000)
+                    replaceSelection(el, with: conv.text)
+                    buffer.removeAll()
+                    select(conv.dst)
+                    return
+                }
+            }
+        }
+        // Запасной путь (терминал, Electron): по запомненным нажатиям.
+        var n = 0
+        for e in buffer.reversed() {
+            guard case .key(let k) = e, isLetter(layouts[k.layout].table[k.mods][Int(k.code)]) else { break }
+            n += 1
+        }
+        guard n > 0 else { return }
+        var out = ""
+        var dst = 0
+        for idx in (buffer.count - n)..<buffer.count {
+            if case .key(var k) = buffer[idx] {
+                let flipped = 1 - k.layout
+                let t = layouts[flipped].table[k.mods][Int(k.code)]
+                out += t.isEmpty ? layouts[k.layout].table[k.mods][Int(k.code)] : t
+                k.layout = flipped
+                buffer[idx] = .key(k)
+                dst = flipped
+            }
+        }
+        backspaces(n)
+        insert(out)
+        select(dst)
     }
 
     /// Основной путь: читаем текст до курсора через Accessibility.

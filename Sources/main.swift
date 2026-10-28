@@ -469,7 +469,7 @@ final class App: NSObject, NSApplicationDelegate {
                 } else if !down && optDown {
                     optDown = false
                     if !optUsed && Date().timeIntervalSince(optTime) < 0.5 {
-                        DispatchQueue.main.async { self.fnSpace() }
+                        runFix { self.fnSpace() }
                     }
                 }
                 return pass
@@ -496,7 +496,7 @@ final class App: NSObject, NSApplicationDelegate {
             if optDown && code == 49 && fixActive &&           // Option + Space — только последнее слово
                event.flags.intersection([.maskCommand, .maskControl, .maskShift, .maskSecondaryFn]).isEmpty {
                 swallowSpaceUp = true
-                DispatchQueue.main.async { self.lastWordFix() }
+                runFix { self.lastWordFix() }
                 return nil
             }
             if code == 79 {                                 // F18 (= Fn через hidutil)
@@ -738,6 +738,20 @@ final class App: NSObject, NSApplicationDelegate {
         fixViaBuffer()
     }
 
+    var fixBusy = false
+    var lastFixAt = Date.distantPast
+
+    /// Одно исправление за раз: повторные нажатия, пока идёт замена, игнорируются.
+    func runFix(_ work: @escaping () -> Void) {
+        guard !fixBusy, Date().timeIntervalSince(lastFixAt) > 0.35 else { return }
+        fixBusy = true
+        DispatchQueue.main.async {
+            work()
+            self.lastFixAt = Date()
+            self.fixBusy = false
+        }
+    }
+
     /// Option + Space: конвертировать только последнее слово перед курсором —
     /// до первого пробела или спецсимвола. Если есть выделение — его.
     func lastWordFix() {
@@ -885,14 +899,22 @@ final class App: NSObject, NSApplicationDelegate {
     }
 
     /// Заменяет выделенное: сначала через AX, если поле не поменялось — вставкой.
+    /// Многие программы (браузеры, Electron) применяют замену не сразу, поэтому
+    /// раньше текст иногда вставлялся повторно. Теперь вставляем запасным путём
+    /// только если старое выделение всё ещё на месте — вставка его заменит, а не добавит.
     func replaceSelection(_ el: AXUIElement, with s: String) {
-        let before = axString(el, kAXValueAttribute)
+        let old = axString(el, kAXSelectedTextAttribute) ?? ""
+        if old == s { return }
         let ok = AXUIElementSetAttributeValue(el, kAXSelectedTextAttribute as CFString, s as CFString) == .success
-        usleep(30_000)
-        let after = axString(el, kAXValueAttribute)
-        if !ok || (before != nil && before == after) {
-            insert(s)
+        if old.isEmpty {
+            if !ok { insert(s) }
+            return
         }
+        for _ in 0..<8 {
+            usleep(40_000)
+            guard let cur = axString(el, kAXSelectedTextAttribute), cur == old else { return }   // замена применилась
+        }
+        insert(s)                                   // выделение не тронуто — заменяем его вставкой
     }
 
     // MARK: Синтетический ввод
